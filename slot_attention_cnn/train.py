@@ -18,46 +18,35 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 parser = argparse.ArgumentParser()
 
 parser.add_argument
-parser.add_argument('--model_dir', default='./tmp/model10.ckpt', type=str, help='where to save models' )
+parser.add_argument('--model_dir', default='/kaggle/working/model1.ckpt', type=str, help='where to save models' )
 parser.add_argument('--seed', default=0, type=int, help='random seed')
-parser.add_argument('--batch_size', default=16, type=int)
-parser.add_argument('--num_slots', default=8, type=int, help='Number of slots in Slot Attention.')
+parser.add_argument('--batch_size', default=64, type=int)
+parser.add_argument('--num_slots', default=7, type=int, help='Number of slots in Slot Attention.')
 parser.add_argument('--num_iterations', default=3, type=int, help='Number of attention iterations.')
 parser.add_argument('--hid_dim', default=64, type=int, help='hidden dimension size')
 parser.add_argument('--learning_rate', default=0.0004, type=float)
 parser.add_argument('--warmup_steps', default=10000, type=int, help='Number of warmup steps for the learning rate.')
 parser.add_argument('--decay_rate', default=0.5, type=float, help='Rate for the learning rate decay.')
 parser.add_argument('--decay_steps', default=100000, type=int, help='Number of steps for the learning rate decay.')
-parser.add_argument('--num_workers', default=1, type=int, help='number of workers for loading data')
-parser.add_argument('--num_epochs', default=1000, type=int, help='number of workers for loading data')
+parser.add_argument('--num_workers', default=8, type=int, help='number of workers for loading data')
+parser.add_argument('--num_epochs', default=1, type=int, help='number of workers for loading data')
 
 opt = parser.parse_args()
 resolution = (128, 128)
 
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
-img_transform = transforms.Compose([
-               transforms.ToTensor(),
-               transforms.Resize((128,128))])
-
-#img = cv2.imread('CLEVR_v1.0/CLEVR_v1.0/images/train/CLEVR_train_000000.png')
-#plt.imsave('test.png', img)
-
-train_set = torchvision.datasets.ImageFolder(root="CLEVR_v1.0/CLEVR_v1.0/images/dataset", transform=img_transform)
-
-#train_set = CLEVR('train')
-
-model = SlotAttentionAutoEncoder(resolution, opt.num_slots, opt.num_iterations, opt.hid_dim).to(device)
+train_set = CLEVR('/kaggle/input/clevr-dataset/CLEVR_v1.0', 'train')
+model = SlotAttentionAutoEncoder(resolution, opt.num_slots, opt.num_iterations, opt.hid_dim)
 # model.load_state_dict(torch.load('./tmp/model6.ckpt')['model_state_dict'])
+
+model = nn.DataParallel(model)
+model.to(device)
 
 criterion = nn.MSELoss()
 
 params = [{'params': model.parameters()}]
 
-#train_dataloader = torch.utils.data.DataLoader(train_set, batch_size=opt.batch_size,
-                        #shuffle=True, num_workers=opt.num_workers)
-
-train_dataloader = torch.utils.data.DataLoader(train_set,batch_size=opt.batch_size,shuffle=True)
+train_dataloader = torch.utils.data.DataLoader(train_set, batch_size=opt.batch_size,
+                        shuffle=True, num_workers=opt.num_workers, pin_memory=True)
 
 optimizer = optim.Adam(params, lr=opt.learning_rate)
 
@@ -68,11 +57,7 @@ for epoch in range(opt.num_epochs):
 
     total_loss = 0
 
-    for sample,_ in tqdm(train_dataloader):
-        #print(type(sample))
-        #print("len ",len(sample))
-        #print("shape ",sample[0].shape)
-        #print(sample)
+    for sample in tqdm(train_dataloader):
         i += 1
 
         if i < opt.warmup_steps:
@@ -85,8 +70,7 @@ for epoch in range(opt.num_epochs):
 
         optimizer.param_groups[0]['lr'] = learning_rate
         
-        image = sample.to(device)
-        #print(image.shape)
+        image = sample['image'].to(device)
         recon_combined, recons, masks, slots = model(image)
         loss = criterion(recon_combined, image)
         total_loss += loss.item()

@@ -4,7 +4,7 @@ import torch
 import torch.nn.functional as F
 from transformers import CLIPProcessor, CLIPModel
 
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class SlotAttention(nn.Module):
     def __init__(self, num_slots, dim, iters = 3, eps = 1e-8, hidden_dim = 128):
@@ -84,18 +84,11 @@ class SoftPositionEmbed(nn.Module):
         """
         super().__init__()
         self.embedding = nn.Linear(4, hidden_size, bias=True)
-        self.grid = build_grid(resolution)
+        self.grid = nn.Parameter(build_grid(resolution), requires_grad=False)
 
     def forward(self, inputs):
         grid = self.embedding(self.grid)
         return inputs + grid
-    
-class ClipEncoder(nn.Module):
-    def __init__(self,resolution,hid_dim):
-        self.encoder_model = CLIPModel.from_pretrained("openai/clip-vit-large-patch14")
-        self.processor = CLIPProcessor.from_pretrained("openai/clip-vit-large-patch14")
-
-        #encoder_model.to(device)
 
 class Encoder(nn.Module):
     def __init__(self, resolution, hid_dim):
@@ -185,7 +178,6 @@ class SlotAttentionAutoEncoder(nn.Module):
 
         # Convolutional encoder with position embedding.
         x = self.encoder_cnn(image)  # CNN Backbone.
-        #print("Post encoder shape  ",x.shape)
         x = nn.LayerNorm(x.shape[1:]).to(device)(x)
         x = self.fc1(x)
         x = F.relu(x)
@@ -195,11 +187,11 @@ class SlotAttentionAutoEncoder(nn.Module):
         # Slot Attention module.
         slots = self.slot_attention(x)
         # `slots` has shape: [batch_size, num_slots, slot_size].
-        #print("Slot direct op ",slots.shape)
+
         # """Broadcast slot features to a 2D grid and collapse slot dimension.""".
         slots = slots.reshape((-1, slots.shape[-1])).unsqueeze(1).unsqueeze(2)
         slots = slots.repeat((1, 8, 8, 1))
-        #print("Slots shape  ",slots.shape)
+        
         # `slots` has shape: [batch_size*num_slots, width_init, height_init, slot_size].
         x = self.decoder_cnn(slots)
         # `x` has shape: [batch_size*num_slots, width, height, num_channels+1].
